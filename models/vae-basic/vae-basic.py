@@ -149,7 +149,7 @@ for epoch in range(num_epochs):
         else:
             kl_weight = 1.0
 
-        minibatch_cost = (minibatch_train_recon + (kl_weight)*minibatch_train_kl)/features.size(0).item()
+        minibatch_cost = (minibatch_train_recon + (kl_weight)*minibatch_train_kl)/features.size(0)
         training_set_kl += minibatch_train_kl
         training_set_recon += minibatch_train_recon
 
