@@ -39,31 +39,19 @@ wandb.init(
     }
 )
 
-temp_dataset = datasets.CIFAR10(root=data_root, train=True, transform=transforms.ToTensor(), download=True)
-
-training_indices, val_indices = torch.utils.data.random_split(range(len(temp_dataset)), [45000,5000], generator=generator)
-
-raw_train_data = temp_dataset.data[training_indices].astype('float32') / 255
 
 
 
 
-#mean/std computation for training set.
-mean = raw_train_data.mean(axis=(0,1,2))
-std = raw_train_data.std(axis=(0,1,2))
 
 
+full_training_set = datasets.CIFAR10(root = data_root, train=True,transform=transforms.ToTensor(), download=False) #download is false why? transforms changed no? anyways true wouldnt change anything no?
 
+training_indices, val_indices = torch.utils.data.random_split(range(len(full_training_set)), [45000,5000], generator = generator)
 
-#now we computed everything. now we create NEW transforms.Compose object, with the normalization one as well. then we reload the datset.
-
-new_transforms = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean.tolist(),std.tolist())])
-
-full_training_set = datasets.CIFAR10(root = data_root, train=True,transform=new_transforms, download=False) #download is false why? transforms changed no? anyways true wouldnt change anything no?
-
-train_set = Subset(full_training_set, training_indices) #we're using the exact same indices as our original training set choice. this is important
-val_set = Subset(full_training_set, val_indices)
-test_set = datasets.CIFAR10(root=data_root, train=False, transform=new_transforms, download=True)
+train_set = Subset(full_training_set, training_indices.indices) #we're using the exact same indices as our original training set choice. this is important
+val_set = Subset(full_training_set, val_indices.indices)
+test_set = datasets.CIFAR10(root=data_root, train=False, transform=transforms.ToTensor(), download=True)
 
 train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
 val_loader = DataLoader(val_set, batch_size=batch_size, shuffle = False)
@@ -122,12 +110,12 @@ class VariationalAutoencoder(torch.nn.Module):
         return z_mean, z_log_var, encoded, decoded
 
 
-#model shape test. added in the second iteration. 
-model = VariationalAutoencoder(3072, 512, 32).to(device)
-dummy_batch = torch.randn(5, 3072).to(device) # Batch of 5 flat images
-z_mean, z_log_var, encoded, decoded = model(dummy_batch)
-print("Decoded shape:", decoded.shape) # Should be [5, 3072]
-sys.exit() # Stop the script here so it doesn't run the broken training loop
+##model shape test. added in the second iteration. 
+#model = VariationalAutoencoder(3072, 512, 32).to(device)
+#dummy_batch = torch.randn(5, 3072).to(device) # Batch of 5 flat images
+#z_mean, z_log_var, encoded, decoded = model(dummy_batch)
+#print("Decoded shape:", decoded.shape) # Should be [5, 3072]
+#sys.exit() # Stop the script here so it doesn't run the broken training loop
 
 
     
@@ -144,39 +132,67 @@ optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 start_time = time.time()
 
 for epoch in range(num_epochs):
+    training_set_recon = 0.0
+    training_set_kl = 0.0
     for batch_idx, (features,targets) in enumerate(train_loader):
         
-        features = features.view(batch_size, 3072).to(device) #(batchsize, 3072)
+        features = features.view(features.size(0), 3072).to(device) #(batchsize, 3072)
 
         z_mean, z_log_var, encoded, decoded = model(features)
 
         #cost
-        kl_divergence = (0.5 * (z_mean**2 + torch.exp(z_log_var) - z_log_var - 1)).sum()
-        pixelwise_mse = F.mse_loss(decoded, features, reduction='sum')
+        minibatch_train_kl = (0.5 * (z_mean**2 + torch.exp(z_log_var) - z_log_var - 1)).sum()
+        minibatch_train_recon = F.mse_loss(decoded, features, reduction='sum')
 
         if use_kl_annealing: 
-            kl_weight = min(1.0, anneal_epochs/num_epochs)
+            kl_weight = min(1.0, (epoch+1)/anneal_epochs)
         else:
             kl_weight = 1.0
 
-        cost = pixelwise_mse + (kl_weight)*kl_divergence
+        minibatch_cost = (minibatch_train_recon + (kl_weight)*minibatch_train_kl)/features.size(0).item()
+        training_set_kl += minibatch_train_kl
+        training_set_recon += minibatch_train_recon
 
         optimizer.zero_grad()
-        cost.backward()
+        minibatch_cost.backward()
         optimizer.step()
 
-        wandb.log({
-            "epoch": epoch,
-            "total_loss": cost.item(),
-            "recon_mse": pixelwise_mse.item(),
-            "kl_divergence": kl_divergence.item(),
-            "kl_weight": kl_weight
-        })
+    training_set_recon /= len(train_set)
+    training_set_kl /= len(train_set )
+    training_set_cost = training_set_recon + training_set_kl
+    wandb.log({
+        "epoch": epoch,
+        "total_loss": training_set_cost.item(), #this is only the fucking training loop and the training loss.
+        "train_recon_mse": training_set_recon.item(),
+        "train_kl_divergence": training_set_kl.item(),
+        "kl_weight": kl_weight
+    })
 
 
+    model.eval()
+    with torch.no_grad():
+        val_set_recon = 0.0
+        val_set_kl = 0.0
 
+        for features, targets in val_loader:
+            features = features.view(features.size(0), 3072).to(device)
+            z_mean, z_log_var, encoded, decoded = model(features)
 
+            minibatch_val_kl = (0.5 * (z_mean**2 + torch.exp(z_log_var) - z_log_var - 1)).sum()
+            minibatch_val_recon = F.mse_loss(decoded, features, reduction='sum')
+            val_set_recon += minibatch_val_recon
+            val_set_kl += minibatch_val_kl
 
+        val_set_recon /= len(val_set)
+        val_set_kl /= len(val_set)
 
+        wandb.log({"val_recon_mse": val_set_recon, "val_kl_divergence": val_set_kl})
 
+        #the below code is to reconstruct 8 random images from the val set. i'm putting it under the same torch.no_grad().
 
+        sample_features, _ = next(iter(val_loader))
+        sample_features = sample_features[:8].view(8,3072).to(device)
+        _, _, _, decoded = model(sample_features)
+        decoded = decoded.view(8, 3, 32, 32)
+        grid = torch.cat([sample_features.view(8,3,32,32), decoded], dim = 0)
+        wandb.log({"reconstructions":wandb.Image(grid, caption="Top row - original, bottom row - recon. image")})
