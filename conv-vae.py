@@ -1,9 +1,11 @@
 import time
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
+from torchvision.utils import make_grid, save_image
 
 from experiment_config import ConvVAEConfig, LossConfig
 from models import ConvVAE
@@ -117,6 +119,27 @@ def evaluate(
     return avg_recon, avg_kl, avg_recon + kl_weight * avg_kl
 
 
+def save_final_reconstructions(
+    model: ConvVAE,
+    data_loader: DataLoader,
+    device: torch.device,
+    output_path: Path,
+    num_images: int = 5,
+) -> None:
+    model.eval()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sample_batch, _ = next(iter(data_loader))
+    sample_batch = sample_batch[:num_images].to(device)
+
+    with torch.no_grad():
+        _, _, _, reconstructions = model(sample_batch)
+
+    comparison = torch.cat([sample_batch.cpu(), reconstructions.cpu()], dim=0)
+    grid = make_grid(comparison, nrow=num_images)
+    save_image(grid, output_path)
+
+
 def main() -> None:
     config = ConvVAEConfig()
     loss_config = LossConfig()
@@ -166,6 +189,14 @@ def main() -> None:
 
     elapsed_minutes = (time.time() - start_time) / 60.0
     print(f"training_complete elapsed_minutes={elapsed_minutes:.2f}")
+
+    save_final_reconstructions(
+        model=model,
+        data_loader=val_loader,
+        device=device,
+        output_path=Path("artifacts") / "conv-vae-final-recon.png",
+    )
+    print("saved_reconstructions path=artifacts/conv-vae-final-recon.png")
 
 
 if __name__ == "__main__":

@@ -11,3 +11,5 @@ wheels/
 
 
 AGENTS.md
+artifacts/
+*.log
