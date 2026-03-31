@@ -22,7 +22,9 @@ def reconstruction_loss(
         raise ValueError(f"Unsupported reconstruction loss: {loss_config.reconstruction_loss}")
     if loss_config.reduction != "sum":
         raise ValueError(f"Unsupported reduction: {loss_config.reduction}")
-    return F.binary_cross_entropy(reconstruction, target, reduction=loss_config.reduction)
+    return F.binary_cross_entropy_with_logits(
+        reconstruction, target, reduction=loss_config.reduction
+    )
 
 
 def make_loaders(config: ConvVAEConfig) -> tuple[DataLoader, DataLoader, DataLoader]:
@@ -134,6 +136,7 @@ def save_final_reconstructions(
 
     with torch.no_grad():
         _, _, _, reconstructions = model(sample_batch)
+        reconstructions = torch.sigmoid(reconstructions)
 
     comparison = torch.cat([sample_batch.cpu(), reconstructions.cpu()], dim=0)
     grid = make_grid(comparison, nrow=num_images)

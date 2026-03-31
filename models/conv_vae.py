@@ -35,7 +35,6 @@ class ConvVAE(nn.Module):
             nn.BatchNorm2d(c1),
             nn.LeakyReLU(negative_slope=slope, inplace=True),
             nn.ConvTranspose2d(c1, 3, kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid(),
         )
 
         self.final_channels = c3

@@ -14,7 +14,7 @@ class BaseExperimentConfig:
 class LossConfig:
     reconstruction_loss: str = "bce"
     reduction: str = "sum"
-    use_kl_annealing: bool = False
+    use_kl_annealing: bool = True
     anneal_epochs: int = 20
 
 
@@ -23,4 +23,3 @@ class ConvVAEConfig(BaseExperimentConfig):
     latent_dim: int = 128
     channels: tuple[int, int, int] = field(default_factory=lambda: (32, 64, 128))
     negative_slope: float = 1e-4
-
